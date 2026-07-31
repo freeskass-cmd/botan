@@ -53,9 +53,13 @@ async def get_user(user_id: int):
         async with db.execute("SELECT model, role, history FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
-                return {"model": row[0], "role": row[1], "history": json.loads(row[2])}
+                # Если в базе осталась старая модель 1.5, авто-заменяем на 2.0
+                model_name = row[0]
+                if "1.5" in model_name:
+                    model_name = "gemini-2.0-flash"
+                return {"model": model_name, "role": row[1], "history": json.loads(row[2])}
             
-            default_state = {"model": "gemini-1.5-flash", "role": "default", "history": []}
+            default_state = {"model": "gemini-2.0-flash", "role": "default", "history": []}
             await db.execute("INSERT INTO users (user_id, model, role, history) VALUES (?, ?, ?, ?)",
                              (user_id, default_state["model"], default_state["role"], json.dumps([])))
             await db.commit()
@@ -73,22 +77,19 @@ async def update_history(user_id: int, new_history: list):
 
 # --- 4. УТИЛИТА: БРОНЕБОЙНЫЙ ВЫВОД ТЕКСТА ---
 async def safe_send_text(message: types.Message, wait_message: types.Message, text: str):
-    """Пытается отправить Markdown. Если Telegram ругается на символы — слать сырой текст."""
     try:
         await wait_message.edit_text(text, parse_mode="Markdown")
     except TelegramBadRequest:
         try:
-            # Вторая попытка с HTML
             await wait_message.edit_text(html.escape(text), parse_mode="HTML")
         except TelegramBadRequest:
-            # Если оба упали — шлем без форматирования вообще
             await wait_message.edit_text(text, parse_mode=None)
 
 # --- 5. КОМАНДЫ И МЕНЮ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "👋 Привет! Я продвинутый мультимодальный ИИ.\n\n"
+        "👋 Привет! Я продвинутый мультимодальный ИИ на базе Gemini 2.0.\n\n"
         "Пиши текст, кидай фото, PDF-документы или записывай голосовые сообщения!\n\n"
         "Настройки: /settings\nЛимиты: /limits"
     )
@@ -102,8 +103,8 @@ async def cmd_settings(message: types.Message):
     state = await get_user(message.from_user.id)
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="⚡️ Flash" if state['model'] == "gemini-1.5-flash" else "Flash", callback_data="model_flash")
-    builder.button(text="🧠 Pro" if state['model'] == "gemini-1.5-pro" else "Pro", callback_data="model_pro")
+    builder.button(text="⚡️ Flash 2.0" if state['model'] == "gemini-2.0-flash" else "Flash 2.0", callback_data="model_flash")
+    builder.button(text="🧠 Pro 2.0" if state['model'] == "gemini-2.0-pro-exp" else "Pro 2.0", callback_data="model_pro")
     builder.button(text="🤖 Обычный" if state['role'] == "default" else "Обычный", callback_data="role_default")
     builder.button(text="🎬 Режиссер Видео" if state['role'] == "video_creator" else "Режиссер Видео", callback_data="role_video")
     builder.button(text="🧹 Очистить контекст", callback_data="clear_context")
@@ -113,7 +114,7 @@ async def cmd_settings(message: types.Message):
 
 @dp.callback_query(F.data.startswith("model_"))
 async def cb_model(callback: types.CallbackQuery):
-    model_name = "gemini-1.5-flash" if "flash" in callback.data else "gemini-1.5-pro"
+    model_name = "gemini-2.0-flash" if "flash" in callback.data else "gemini-2.0-pro-exp"
     await update_user_setting(callback.from_user.id, "model", model_name)
     await callback.message.edit_text(f"✅ Модель переключена на: {model_name}")
 
