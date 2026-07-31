@@ -176,7 +176,7 @@ async def core_handler(message: types.Message):
             else:
                 content_to_send.append(message.text)
 
-            await wait_message.edit_text("✍️ <iПечатаю...</i>", parse_mode="HTML")
+            await wait_message.edit_text("✍️ <>iПечатаю...</i>", parse_mode="HTML")
             response = await chat.send_message_async(content_to_send)
             
             new_history = [{"role": msg.role, "parts": [msg.parts[0].text]} for msg in chat.history]
