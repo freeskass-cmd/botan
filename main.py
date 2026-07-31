@@ -1,3 +1,4 @@
+cat << 'EOF' > main.py
 import asyncio
 import os
 import logging
@@ -13,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 # --- 1. КОНФИГУРАЦИЯ ---
 load_dotenv()
@@ -26,11 +28,19 @@ dp = Dispatcher()
 
 # --- 2. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И РОЛИ ---
 user_locks = defaultdict(asyncio.Lock)
-MAX_HISTORY_PAIRS = 10 # Храним только последние 10 вопросов-ответов
+MAX_HISTORY_PAIRS = 10 
 
 ROLES = {
     "default": "Ты умный, вежливый и лаконичный ИИ-ассистент.",
-    "video_creator": "Ты креативный режиссер. Пишешь смешные, детальные промпты для нейросетей-генераторов видео. Главные герои — животные (например, собаки) в человеческих абсурдных ситуациях (за рулем такси, на заводе и т.д.). Описывай свет, ракурс и динамику."
+    "video_creator": "Ты креативный режиссер. Пишешь смешные, детальные промпты для нейросетей-генераторов видео. Главные герои — животные (например, собаки) в человеческих абсурдных ситуациях. Описывай свет, ракурс и динамику."
+}
+
+# Отключаем агрессивные блокировки цензуры
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
 }
 
 # --- 3. БАЗА ДАННЫХ (aiosqlite) ---
@@ -47,7 +57,6 @@ async def get_user(user_id: int):
             if row:
                 return {"model": row[0], "role": row[1], "history": json.loads(row[2])}
             
-            # Новый юзер
             default_state = {"model": "gemini-1.5-flash", "role": "default", "history": []}
             await db.execute("INSERT INTO users (user_id, model, role, history) VALUES (?, ?, ?, ?)",
                              (user_id, default_state["model"], default_state["role"], json.dumps([])))
@@ -66,7 +75,6 @@ async def update_history(user_id: int, new_history: list):
 
 # --- 4. УТИЛИТА: БЕЗОПАСНЫЙ ВЫВОД ТЕКСТА ---
 async def safe_send_text(message: types.Message, wait_message: types.Message, text: str):
-    """Отправляет текст. Если Telegram ругается на кривую разметку от LLM — шлет сырой текст."""
     if len(text) <= 4096:
         try:
             await wait_message.edit_text(text, parse_mode="Markdown")
@@ -126,7 +134,6 @@ async def core_handler(message: types.Message):
     user_id = message.from_user.id
     user_lock = user_locks[user_id]
     
-    # 6.1. Защита от спама/гонки (Race Condition)
     if user_lock.locked():
         await message.reply("⏳ <i>Пишу ответ на предыдущий вопрос. Подожди секунду!</i>", parse_mode="HTML")
         return
@@ -139,20 +146,18 @@ async def core_handler(message: types.Message):
         temp_path = None
         
         try:
-            # 6.2. Инициализация ИИ
             model = genai.GenerativeModel(
                 model_name=state["model"],
-                system_instruction=ROLES[state["role"]]
+                system_instruction=ROLES[state["role"]],
+                safety_settings=SAFETY_SETTINGS
             )
             
-            # 6.3. Скользящее окно памяти (Sliding Window)
             trimmed_history = state["history"][-(MAX_HISTORY_PAIRS * 2):] if state["history"] else []
             formatted_history = [{"role": m["role"], "parts": [m["parts"][0]]} for m in trimmed_history]
             chat = model.start_chat(history=formatted_history)
             
             content_to_send = []
             
-            # 6.4. Обработка файлов (Фото, Voice, PDF)
             if not message.text:
                 await wait_message.edit_text("⏳ <i>Загружаю файл в нейросеть...</i>", parse_mode="HTML")
                 file_id = message.voice.file_id if message.voice else (message.document.file_id if message.document else message.photo[-1].file_id)
@@ -172,26 +177,24 @@ async def core_handler(message: types.Message):
             else:
                 content_to_send.append(message.text)
 
-            # 6.5. Генерация
-            await wait_message.edit_text("✍️ <i>Формулирую ответ...</i>", parse_mode="HTML")
+            await wait_message.edit_text("✍️ <iПечатаю...</i>", parse_mode="HTML")
             response = await chat.send_message_async(content_to_send)
             
-            # 6.6. Обновление БД
             new_history = [{"role": msg.role, "parts": [msg.parts[0].text]} for msg in chat.history]
             await update_history(user_id, new_history)
             
-            # 6.7. Вывод пользователю
             await safe_send_text(message, wait_message, response.text)
             
         except Exception as e:
             logging.error(f"Error handling message: {e}")
+            # Отправляем точный текст ошибки прямо пользователю в Telegram
+            err_msg = html.escape(str(e))
             await wait_message.edit_text(
-                "❌ <b>Ошибка генерации.</b>\nВозможно, файл не поддерживается, превышен лимит или сработала цензура Google.", 
+                f"❌ <b>Ошибка генерации:</b>\n<code>{err_msg}</code>", 
                 parse_mode="HTML"
             )
             
         finally:
-            # 6.8. СБОРЩИК МУСОРА (Удаление файлов)
             if uploaded_file:
                 try:
                     genai.delete_file(uploaded_file.name)
@@ -209,3 +212,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+EOF
