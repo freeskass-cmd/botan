@@ -1,3 +1,4 @@
+cat << 'EOF'> main.py
 import asyncio
 import os
 import logging
@@ -34,7 +35,6 @@ ROLES = {
     "video_creator": "Ты креативный режиссер. Пишешь смешные, детальные промпты для нейросетей-генераторов видео. Главные герои — животные (например, собаки) в человеческих абсурдных ситуациях. Описывай свет, ракурс и динамику."
 }
 
-# Отключаем агрессивные блокировки цензуры
 SAFETY_SETTINGS = {
     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -94,7 +94,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(Command("limits"))
 async def cmd_limits(message: types.Message):
-    await message.answer("📊 <b>Лимиты Free API:</b>\n15 запросов в минуту\n1 млн токенов в минуту", parse_mode="HTML")
+    await message.answer("📊 Лимиты Free API:\n15 запросов в минуту\n1 млн токенов в минуту")
 
 @dp.message(Command("settings"))
 async def cmd_settings(message: types.Message):
@@ -108,7 +108,7 @@ async def cmd_settings(message: types.Message):
     builder.button(text="🧹 Очистить контекст", callback_data="clear_context")
     builder.adjust(2, 2, 1)
     
-    await message.answer("⚙️ <b>Настройки:</b>\nВыбирай модель и личность бота:", reply_markup=builder.as_markup(), parse_mode="HTML")
+    await message.answer("⚙️ Настройки:\nВыбирай модель и личность бота:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("model_"))
 async def cb_model(callback: types.CallbackQuery):
@@ -134,12 +134,12 @@ async def core_handler(message: types.Message):
     user_lock = user_locks[user_id]
     
     if user_lock.locked():
-        await message.reply("⏳ <i>Пишу ответ на предыдущий вопрос. Подожди секунду!</i>", parse_mode="HTML")
+        await message.reply("⏳ Пишу ответ на предыдущий вопрос. Подожди секунду!")
         return
 
     async with user_lock:
         state = await get_user(user_id)
-        wait_message = await message.answer("⏳ <i>Принимаю данные...</i>", parse_mode="HTML")
+        wait_message = await message.answer("⏳ Принимаю данные...")
         
         uploaded_file = None
         temp_path = None
@@ -158,7 +158,7 @@ async def core_handler(message: types.Message):
             content_to_send = []
             
             if not message.text:
-                await wait_message.edit_text("⏳ <i>Загружаю файл в нейросеть...</i>", parse_mode="HTML")
+                await wait_message.edit_text("⏳ Загружаю файл в нейросеть...")
                 file_id = message.voice.file_id if message.voice else (message.document.file_id if message.document else message.photo[-1].file_id)
                 file_info = await bot.get_file(file_id)
                 downloaded_file = await bot.download_file(file_info.file_path)
@@ -176,7 +176,7 @@ async def core_handler(message: types.Message):
             else:
                 content_to_send.append(message.text)
 
-            await wait_message.edit_text("✍️ <>iПечатаю...</i>", parse_mode="HTML")
+            await wait_message.edit_text("✍️ Формулирую ответ...")
             response = await chat.send_message_async(content_to_send)
             
             new_history = [{"role": msg.role, "parts": [msg.parts[0].text]} for msg in chat.history]
@@ -186,12 +186,8 @@ async def core_handler(message: types.Message):
             
         except Exception as e:
             logging.error(f"Error handling message: {e}")
-            # Отправляем точный текст ошибки прямо пользователю в Telegram
             err_msg = html.escape(str(e))
-            await wait_message.edit_text(
-                f"❌ <b>Ошибка генерации:</b>\n<code>{err_msg}</code>", 
-                parse_mode="HTML"
-            )
+            await wait_message.edit_text(f"❌ Ошибка генерации:\n{err_msg}")
             
         finally:
             if uploaded_file:
