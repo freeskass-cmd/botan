@@ -1,4 +1,3 @@
-cat << 'EOF'> main.py
 import asyncio
 import os
 import logging
@@ -72,16 +71,18 @@ async def update_history(user_id: int, new_history: list):
         await db.execute("UPDATE users SET history = ? WHERE user_id = ?", (json.dumps(new_history), user_id))
         await db.commit()
 
-# --- 4. УТИЛИТА: БЕЗОПАСНЫЙ ВЫВОД ТЕКСТА ---
+# --- 4. УТИЛИТА: БРОНЕБОЙНЫЙ ВЫВОД ТЕКСТА ---
 async def safe_send_text(message: types.Message, wait_message: types.Message, text: str):
-    if len(text) <= 4096:
+    """Пытается отправить Markdown. Если Telegram ругается на символы — слать сырой текст."""
+    try:
+        await wait_message.edit_text(text, parse_mode="Markdown")
+    except TelegramBadRequest:
         try:
-            await wait_message.edit_text(text, parse_mode="Markdown")
+            # Вторая попытка с HTML
+            await wait_message.edit_text(html.escape(text), parse_mode="HTML")
         except TelegramBadRequest:
+            # Если оба упали — шлем без форматирования вообще
             await wait_message.edit_text(text, parse_mode=None)
-    else:
-        await wait_message.delete()
-        await message.answer(text[:4096], parse_mode=None)
 
 # --- 5. КОМАНДЫ И МЕНЮ ---
 @dp.message(Command("start"))
@@ -186,8 +187,7 @@ async def core_handler(message: types.Message):
             
         except Exception as e:
             logging.error(f"Error handling message: {e}")
-            err_msg = html.escape(str(e))
-            await wait_message.edit_text(f"❌ Ошибка генерации:\n{err_msg}")
+            await wait_message.edit_text(f"❌ Ошибка генерации:\n{e}")
             
         finally:
             if uploaded_file:
